@@ -13,7 +13,6 @@
       env,
     } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0";
 
-    // Bruk fp16 ONNX for kompakt browser-deploy
     env.allowLocalModels = false;
     env.useBrowserCache = true;
 
@@ -22,7 +21,7 @@
     let model = null;
 
     async function loadModel(progressCallback) {
-      // transformers.js sender events: {status, name, file, progress?, loaded?, total?}
+      // transformers.js events: {status, name, file, progress?, loaded?, total?}
       // Statuser: 'initiate', 'download', 'progress', 'done', 'ready'
       const cb = (info) => {
         console.log("[load progress]", info);
@@ -32,7 +31,7 @@
       };
       const opts = {
         progress_callback: cb,
-        dtype: "fp16",  // 87 MB; bruker onnx/detector_fp16.onnx
+        dtype: "fp16",
       };
       tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID, opts);
       model = await AutoModelForSequenceClassification.from_pretrained(MODEL_ID, opts);
@@ -62,17 +61,43 @@
       t = t.replace(/^#{1,6}\s+/gm, '');
       // Markdown bullets
       t = t.replace(/^\s*[\*\-\+]\s+/gm, '');
-      // Quotes → strip
-      t = t.replace(/[«»""„‟‘’‚‛ʼʹʻʽ′´`"']/g, '');
-      // Dashes → -
-      t = t.replace(/[—–−‐‑‒―]/g, '-');
-      // Ellipsis
+      // Quotes -> strip (all variants: latin, smart, cyrillic-style, etc)
+      t = t.replace(/[«»“-‟‘-‛ʼ-ʽʹ-ʻ′´`"']/g, '');
+      // Dashes -> '-'
+      t = t.replace(/[‐-―−]/g, '-');
+      // Ellipsis -> '...'
       t = t.replace(/…/g, '...');
-      // Repeated punct runs ≥2 → 1
+      // Repeated punct runs (2+ same special-char) -> single
       t = t.replace(/([^\w\s]|_)\1+/g, '$1');
-      // Decorative + invisible chars (subset; comprehensive cleanup)
-      t = t.replace(/[­§· -‏ - ⁠﻿‐-―‘-‟†-‧‰-⁒←-⇿∀-⋿⌀-⏿─-╿▀-▟■-◿☀-⛿✀-➿⬀-⯿　]/g, '');
-      // Emoji range (BMP + supplementary). Simple BMP cleanup; emoji surrogate pairs in supplementary
+      // Decorative + invisible chars in one big strip class
+      t = t.replace(
+        new RegExp(
+          '[' +
+            '\\u00AD' +                  // soft hyphen
+            '\\u00A7' +                  // section sign §
+            '\\u00B7' +                  // middle dot ·
+            '\\u200B-\\u200F' +          // zero-width + RTL/LTR markers
+            '\\u2028-\\u202F' +          // line/para separators, narrow no-break, etc
+            '\\u2060-\\u206F' +          // word joiner + invisible
+            '\\uFEFF' +                  // BOM
+            '\\u2020-\\u2027' +          // daggers, bullets
+            '\\u2030-\\u205E' +          // permille, prime, etc
+            '\\u2190-\\u21FF' +          // arrows
+            '\\u2200-\\u22FF' +          // math operators
+            '\\u2300-\\u23FF' +          // misc technical
+            '\\u2500-\\u257F' +          // box drawings
+            '\\u2580-\\u259F' +          // block elements
+            '\\u25A0-\\u25FF' +          // geometric shapes (bullets etc)
+            '\\u2600-\\u26FF' +          // misc symbols (heart, star, etc)
+            '\\u2700-\\u27BF' +          // dingbats
+            '\\u2B00-\\u2BFF' +          // supplemental arrows
+            '\\u3000' +                  // ideographic space
+            ']',
+          'g'
+        ),
+        ''
+      );
+      // Emoji-blokker U+1F000-U+1FAFF
       t = t.replace(/[\u{1F000}-\u{1FAFF}]/gu, '');
       // Collapse whitespace
       t = t.replace(/\s+/g, ' ').trim();
@@ -88,8 +113,7 @@
         return_tensors: "pt",
       });
       const out = await model(inputs);
-      const logits = out.logits.data;  // Float32Array, shape [1, 2]
-      // softmax
+      const logits = out.logits.data;  // Float32Array, [1, 2]
       const m = Math.max(logits[0], logits[1]);
       const e0 = Math.exp(logits[0] - m);
       const e1 = Math.exp(logits[1] - m);
@@ -101,12 +125,7 @@
       };
     }
 
-    // Eksponer til Rust
-    window.naiDetector = {
-      loadModel,
-      predict,
-      cleanText,
-    };
+    window.naiDetector = { loadModel, predict, cleanText };
   </script>
 </head>
 <body>
