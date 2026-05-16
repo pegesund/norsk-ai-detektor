@@ -22,9 +22,10 @@
     let model = null;
 
     async function loadModel(progressCallback) {
-      // transformers.js sender progress-info som {status, file, progress, loaded, total, name}
-      // Vi videresender til Rust-callback hvis satt.
+      // transformers.js sender events: {status, name, file, progress?, loaded?, total?}
+      // Statuser: 'initiate', 'download', 'progress', 'done', 'ready'
       const cb = (info) => {
+        console.log("[load progress]", info);
         if (typeof progressCallback === "function") {
           try { progressCallback(info); } catch (e) { console.error(e); }
         }

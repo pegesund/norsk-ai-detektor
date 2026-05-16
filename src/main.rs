@@ -83,7 +83,12 @@ fn app() -> Html {
                     // Progress-callback fra transformers.js
                     let ms = model_state.clone();
                     let cb = Closure::wrap(Box::new(move |info: JsValue| {
+                        gloo::console::log!("[rust progress]", &info);
+                        let status = js_sys::Reflect::get(&info, &"status".into())
+                            .ok().and_then(|v| v.as_string()).unwrap_or_default();
                         let file = js_sys::Reflect::get(&info, &"file".into())
+                            .ok().and_then(|v| v.as_string()).unwrap_or_default();
+                        let name = js_sys::Reflect::get(&info, &"name".into())
                             .ok().and_then(|v| v.as_string()).unwrap_or_default();
                         let progress = js_sys::Reflect::get(&info, &"progress".into())
                             .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -91,15 +96,16 @@ fn app() -> Html {
                             .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
                         let total = js_sys::Reflect::get(&info, &"total".into())
                             .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        // Bare oppdater når vi har en størrelse å vise (filter ut bookkeeping-events)
-                        if progress > 0.0 || total > 0.0 {
-                            ms.set(ModelState::Loading(LoadProgress {
-                                file,
-                                percent: progress.min(100.0),
-                                loaded_mb: loaded / (1024.0 * 1024.0),
-                                total_mb: total / (1024.0 * 1024.0),
-                            }));
-                        }
+                        // Vis noe for ALLE events (ikke filtrer) — bruk file/name som fallback
+                        let label = if !file.is_empty() { file }
+                                    else if !name.is_empty() { name }
+                                    else { status.clone() };
+                        ms.set(ModelState::Loading(LoadProgress {
+                            file: label,
+                            percent: progress.min(100.0),
+                            loaded_mb: loaded / (1024.0 * 1024.0),
+                            total_mb: total / (1024.0 * 1024.0),
+                        }));
                     }) as Box<dyn FnMut(JsValue)>);
                     let res = JsFuture::from(js_load_model(cb.as_ref())).await;
                     cb.forget(); // lever ut levetiden til Rust
@@ -195,18 +201,26 @@ fn app() -> Html {
     let status_text = match &*model_state {
         ModelState::NotLoaded => html! { <></> },
         ModelState::Loading(p) => {
+            let file_label = if p.file.is_empty() { "modellen".to_string() } else { p.file.clone() };
             let label = if p.total_mb > 0.0 {
                 format!("Laster {} — {:.0}% ({:.1} / {:.1} MB)",
-                        if p.file.is_empty() { "modellen" } else { &p.file },
-                        p.percent, p.loaded_mb, p.total_mb)
+                        file_label, p.percent, p.loaded_mb, p.total_mb)
+            } else if !p.file.is_empty() {
+                format!("Henter {} ...", file_label)
             } else {
                 "Forbereder lasting...".to_string()
             };
-            let pct = p.percent / 100.0;
+            // Hvis vi ikke har bytes ennå, vis indeterminate progress (uten value)
+            let progress_html = if p.total_mb > 0.0 {
+                let pct = p.percent / 100.0;
+                html! { <progress value={format!("{}", pct)} max="1" /> }
+            } else {
+                html! { <progress /> }
+            };
             html! {
                 <div class="status">
                     <div style="margin-bottom: 0.5rem;">{ label }</div>
-                    <progress value={format!("{}", pct)} max="1" />
+                    { progress_html }
                 </div>
             }
         }
