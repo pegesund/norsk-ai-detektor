@@ -6,117 +6,132 @@
   <title>Norsk AI-detektor</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <link data-trunk rel="css" href="styles.css">
+  <!-- onnxruntime-web som global (CommonJS-bundle for browser) -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.min.js"></script>
   <script type="module">
-    import {
-      AutoTokenizer,
-      AutoModelForSequenceClassification,
-      env,
-    } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0";
+    import { AutoTokenizer } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0";
 
-    env.allowLocalModels = false;
-    env.useBrowserCache = true;
+    const MODEL_REPO = "pegesund/norwegian-ai-detector";
+    const MODEL_URL = `https://huggingface.co/${MODEL_REPO}/resolve/main/onnx/detector_fp16.onnx`;
+    const WASM_BASE = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/";
 
-    const MODEL_ID = "pegesund/norwegian-ai-detector";
     let tokenizer = null;
-    let model = null;
+    let session = null;
+
+    async function fetchOnnxWithProgress(url, progressCb) {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`fetch ${url} -> ${resp.status}`);
+      const total = parseInt(resp.headers.get("content-length") || "0", 10);
+      const reader = resp.body.getReader();
+      const chunks = [];
+      let loaded = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        loaded += value.length;
+        if (progressCb) {
+          progressCb({
+            status: "progress",
+            file: "detector_fp16.onnx",
+            loaded, total,
+            progress: total ? (100 * loaded) / total : 0,
+          });
+        }
+      }
+      const buf = new Uint8Array(loaded);
+      let off = 0;
+      for (const c of chunks) { buf.set(c, off); off += c.length; }
+      return buf;
+    }
 
     async function loadModel(progressCallback) {
-      // transformers.js events: {status, name, file, progress?, loaded?, total?}
-      // Statuser: 'initiate', 'download', 'progress', 'done', 'ready'
       const cb = (info) => {
         console.log("[load progress]", info);
         if (typeof progressCallback === "function") {
           try { progressCallback(info); } catch (e) { console.error(e); }
         }
       };
-      const opts = {
+
+      // Tokenizer via transformers.js (standard, støtter PreTrainedTokenizerFast)
+      tokenizer = await AutoTokenizer.from_pretrained(MODEL_REPO, {
         progress_callback: cb,
-        dtype: "fp16",
-      };
-      tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID, opts);
-      model = await AutoModelForSequenceClassification.from_pretrained(MODEL_ID, opts);
+      });
+
+      // ONNX-modell via onnxruntime-web direkte
+      ort.env.wasm.wasmPaths = WASM_BASE;
+      const onnxBytes = await fetchOnnxWithProgress(MODEL_URL, cb);
+      cb({ status: "ready", file: "detector_fp16.onnx" });
+      session = await ort.InferenceSession.create(onnxBytes, {
+        executionProviders: ["wasm"],
+      });
     }
 
     function cleanText(text) {
       let t = text;
-      // Decode HTML entities (basic)
       const tmp = document.createElement('textarea');
       tmp.innerHTML = t;
       t = tmp.value;
-      // Wiki templates {{...}}
       t = t.replace(/\{\{[^{}]*\}\}/g, '');
-      // Short {...}
       t = t.replace(/\{[^{}\n]{0,80}\}/g, '');
-      // Wiki links [[X|Y]] -> Y, [[X]] -> X
       t = t.replace(/\[\[([^\[\]|]*\|)?([^\[\]]+)\]\]/g, '$2');
-      // Short [...] (refs)
       t = t.replace(/\[[^\[\]\n]{0,40}\]/g, '');
-      // HTML tags
       t = t.replace(/<[^<>]+>/g, '');
-      // Wiki headers ==..==
       t = t.replace(/={2,}[^=\n]+={2,}/g, '');
-      // Markdown bold/italic
       t = t.replace(/\*{1,3}([^\*\n]+)\*{1,3}/g, '$1');
-      // Markdown headers
       t = t.replace(/^#{1,6}\s+/gm, '');
-      // Markdown bullets
       t = t.replace(/^\s*[\*\-\+]\s+/gm, '');
-      // Quotes -> strip (all variants: latin, smart, cyrillic-style, etc)
       t = t.replace(/[«»“-‟‘-‛ʼ-ʽʹ-ʻ′´`"']/g, '');
-      // Dashes -> '-'
       t = t.replace(/[‐-―−]/g, '-');
-      // Ellipsis -> '...'
       t = t.replace(/…/g, '...');
-      // Repeated punct runs (2+ same special-char) -> single
       t = t.replace(/([^\w\s]|_)\1+/g, '$1');
-      // Decorative + invisible chars in one big strip class
       t = t.replace(
         new RegExp(
           '[' +
-            '\\u00AD' +                  // soft hyphen
-            '\\u00A7' +                  // section sign §
-            '\\u00B7' +                  // middle dot ·
-            '\\u200B-\\u200F' +          // zero-width + RTL/LTR markers
-            '\\u2028-\\u202F' +          // line/para separators, narrow no-break, etc
-            '\\u2060-\\u206F' +          // word joiner + invisible
-            '\\uFEFF' +                  // BOM
-            '\\u2020-\\u2027' +          // daggers, bullets
-            '\\u2030-\\u205E' +          // permille, prime, etc
-            '\\u2190-\\u21FF' +          // arrows
-            '\\u2200-\\u22FF' +          // math operators
-            '\\u2300-\\u23FF' +          // misc technical
-            '\\u2500-\\u257F' +          // box drawings
-            '\\u2580-\\u259F' +          // block elements
-            '\\u25A0-\\u25FF' +          // geometric shapes (bullets etc)
-            '\\u2600-\\u26FF' +          // misc symbols (heart, star, etc)
-            '\\u2700-\\u27BF' +          // dingbats
-            '\\u2B00-\\u2BFF' +          // supplemental arrows
-            '\\u3000' +                  // ideographic space
-            ']',
+            '\\u00AD\\u00A7\\u00B7' +
+            '\\u200B-\\u200F\\u2028-\\u202F\\u2060-\\u206F\\uFEFF' +
+            '\\u2020-\\u2027\\u2030-\\u205E' +
+            '\\u2190-\\u21FF\\u2200-\\u22FF\\u2300-\\u23FF' +
+            '\\u2500-\\u257F\\u2580-\\u259F\\u25A0-\\u25FF' +
+            '\\u2600-\\u26FF\\u2700-\\u27BF\\u2B00-\\u2BFF\\u3000' +
+          ']',
           'g'
         ),
         ''
       );
-      // Emoji-blokker U+1F000-U+1FAFF
       t = t.replace(/[\u{1F000}-\u{1FAFF}]/gu, '');
-      // Collapse whitespace
       t = t.replace(/\s+/g, ' ').trim();
       return t;
     }
 
     async function predict(text) {
       const cleaned = cleanText(text);
-      const inputs = await tokenizer(cleaned, {
+      // Tokenize → returnerer { input_ids, attention_mask } som Tensor-objekter
+      const enc = await tokenizer(cleaned, {
         truncation: true,
         max_length: 1024,
-        padding: false,
-        return_tensors: "pt",
+        return_tensors: false,  // Få plain arrays — vi bygger ort.Tensor selv
       });
-      const out = await model(inputs);
-      const logits = out.logits.data;  // Float32Array, [1, 2]
-      const m = Math.max(logits[0], logits[1]);
-      const e0 = Math.exp(logits[0] - m);
-      const e1 = Math.exp(logits[1] - m);
+      const ids = enc.input_ids;       // number[]
+      const mask = enc.attention_mask; // number[]
+      const seqLen = ids.length;
+
+      // BigInt64Array for int64-tensorer (NorBERT-4 forventer int64-input)
+      const idsBig = BigInt64Array.from(ids.map((x) => BigInt(x)));
+      const maskBig = BigInt64Array.from(mask.map((x) => BigInt(x)));
+
+      const inputs = {
+        input_ids: new ort.Tensor("int64", idsBig, [1, seqLen]),
+        attention_mask: new ort.Tensor("int64", maskBig, [1, seqLen]),
+      };
+
+      const out = await session.run(inputs);
+      const logits = out.logits.data;  // Float32Array eller Float16Array
+      const v0 = Number(logits[0]);
+      const v1 = Number(logits[1]);
+      const m = Math.max(v0, v1);
+      const e0 = Math.exp(v0 - m);
+      const e1 = Math.exp(v1 - m);
       const sum = e0 + e1;
       return {
         p_human: e0 / sum,
