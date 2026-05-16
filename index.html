@@ -62,8 +62,9 @@
       ort.env.wasm.wasmPaths = WASM_BASE;
       const onnxBytes = await fetchOnnxWithProgress(MODEL_URL, cb);
       cb({ status: "ready", file: "detector_fp16.onnx" });
+      // webgpu har native fp16-støtte; fall tilbake til wasm hvis ikke tilgjengelig
       session = await ort.InferenceSession.create(onnxBytes, {
-        executionProviders: ["wasm"],
+        executionProviders: ["webgpu", "wasm"],
       });
     }
 
@@ -104,31 +105,62 @@
       return t;
     }
 
+    // Konverter fp16 raw bits (Uint16) til fp32 number
+    function fp16ToFp32(u16) {
+      const sign = (u16 >> 15) & 0x1;
+      const exp = (u16 >> 10) & 0x1f;
+      const frac = u16 & 0x3ff;
+      if (exp === 0) {
+        if (frac === 0) return sign ? -0 : 0;
+        return (sign ? -1 : 1) * Math.pow(2, -14) * (frac / 1024);
+      }
+      if (exp === 31) {
+        return frac ? NaN : (sign ? -Infinity : Infinity);
+      }
+      return (sign ? -1 : 1) * Math.pow(2, exp - 15) * (1 + frac / 1024);
+    }
+
+    function logitToNumber(v) {
+      // ort kan returnere Float32Array (vanlig) eller Uint16Array (fp16-output uten Float16Array-støtte)
+      if (typeof v === "number") return v;
+      if (typeof v === "bigint") return Number(v);
+      return v;
+    }
+
     async function predict(text) {
       const cleaned = cleanText(text);
-      // Tokenize → returnerer { input_ids, attention_mask } som Tensor-objekter
+      // Tokenize — transformers.js returnerer Tensor-objekter med .data
       const enc = await tokenizer(cleaned, {
         truncation: true,
         max_length: 1024,
-        return_tensors: false,  // Få plain arrays — vi bygger ort.Tensor selv
       });
-      const ids = enc.input_ids;       // number[]
-      const mask = enc.attention_mask; // number[]
-      const seqLen = ids.length;
+      const idsData = enc.input_ids.data;       // BigInt64Array
+      const maskData = enc.attention_mask.data; // BigInt64Array
+      const seqLen = idsData.length;
 
-      // BigInt64Array for int64-tensorer (NorBERT-4 forventer int64-input)
-      const idsBig = BigInt64Array.from(ids.map((x) => BigInt(x)));
-      const maskBig = BigInt64Array.from(mask.map((x) => BigInt(x)));
+      // Sørg for BigInt64Array (ort krever det for int64)
+      const ids = idsData instanceof BigInt64Array
+        ? idsData
+        : BigInt64Array.from(Array.from(idsData).map(BigInt));
+      const mask = maskData instanceof BigInt64Array
+        ? maskData
+        : BigInt64Array.from(Array.from(maskData).map(BigInt));
 
       const inputs = {
-        input_ids: new ort.Tensor("int64", idsBig, [1, seqLen]),
-        attention_mask: new ort.Tensor("int64", maskBig, [1, seqLen]),
+        input_ids: new ort.Tensor("int64", ids, [1, seqLen]),
+        attention_mask: new ort.Tensor("int64", mask, [1, seqLen]),
       };
 
       const out = await session.run(inputs);
-      const logits = out.logits.data;  // Float32Array eller Float16Array
-      const v0 = Number(logits[0]);
-      const v1 = Number(logits[1]);
+      const raw = out.logits.data;  // Float32Array, Float16Array eller Uint16Array
+      let v0, v1;
+      if (raw instanceof Uint16Array) {
+        v0 = fp16ToFp32(raw[0]);
+        v1 = fp16ToFp32(raw[1]);
+      } else {
+        v0 = logitToNumber(raw[0]);
+        v1 = logitToNumber(raw[1]);
+      }
       const m = Math.max(v0, v1);
       const e0 = Math.exp(v0 - m);
       const e1 = Math.exp(v1 - m);
