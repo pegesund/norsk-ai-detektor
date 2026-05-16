@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Norsk AI-detektor</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link data-trunk rel="css" href="styles.css">
+  <script type="module">
+    import {
+      AutoTokenizer,
+      AutoModelForSequenceClassification,
+      env,
+    } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0";
+
+    // Bruk fp16 ONNX for kompakt browser-deploy
+    env.allowLocalModels = false;
+    env.useBrowserCache = true;
+
+    const MODEL_ID = "pegesund/norwegian-ai-detector";
+    let tokenizer = null;
+    let model = null;
+
+    async function loadModel(progressCallback) {
+      const opts = {
+        progress_callback: progressCallback,
+        dtype: "fp16",  // 87 MB; bruker onnx/detector_fp16.onnx
+      };
+      tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID, opts);
+      model = await AutoModelForSequenceClassification.from_pretrained(MODEL_ID, opts);
+    }
+
+    function cleanText(text) {
+      let t = text;
+      // Decode HTML entities (basic)
+      const tmp = document.createElement('textarea');
+      tmp.innerHTML = t;
+      t = tmp.value;
+      // Wiki templates {{...}}
+      t = t.replace(/\{\{[^{}]*\}\}/g, '');
+      // Short {...}
+      t = t.replace(/\{[^{}\n]{0,80}\}/g, '');
+      // Wiki links [[X|Y]] -> Y, [[X]] -> X
+      t = t.replace(/\[\[([^\[\]|]*\|)?([^\[\]]+)\]\]/g, '$2');
+      // Short [...] (refs)
+      t = t.replace(/\[[^\[\]\n]{0,40}\]/g, '');
+      // HTML tags
+      t = t.replace(/<[^<>]+>/g, '');
+      // Wiki headers ==..==
+      t = t.replace(/={2,}[^=\n]+={2,}/g, '');
+      // Markdown bold/italic
+      t = t.replace(/\*{1,3}([^\*\n]+)\*{1,3}/g, '$1');
+      // Markdown headers
+      t = t.replace(/^#{1,6}\s+/gm, '');
+      // Markdown bullets
+      t = t.replace(/^\s*[\*\-\+]\s+/gm, '');
+      // Quotes → strip
+      t = t.replace(/[«»""„‟‘’‚‛ʼʹʻʽ′´`"']/g, '');
+      // Dashes → -
+      t = t.replace(/[—–−‐‑‒―]/g, '-');
+      // Ellipsis
+      t = t.replace(/…/g, '...');
+      // Repeated punct runs ≥2 → 1
+      t = t.replace(/([^\w\s]|_)\1+/g, '$1');
+      // Decorative + invisible chars (subset; comprehensive cleanup)
+      t = t.replace(/[­§· -‏ - ⁠﻿‐-―‘-‟†-‧‰-⁒←-⇿∀-⋿⌀-⏿─-╿▀-▟■-◿☀-⛿✀-➿⬀-⯿　]/g, '');
+      // Emoji range (BMP + supplementary). Simple BMP cleanup; emoji surrogate pairs in supplementary
+      t = t.replace(/[\u{1F000}-\u{1FAFF}]/gu, '');
+      // Collapse whitespace
+      t = t.replace(/\s+/g, ' ').trim();
+      return t;
+    }
+
+    async function predict(text) {
+      const cleaned = cleanText(text);
+      const inputs = await tokenizer(cleaned, {
+        truncation: true,
+        max_length: 1024,
+        padding: false,
+        return_tensors: "pt",
+      });
+      const out = await model(inputs);
+      const logits = out.logits.data;  // Float32Array, shape [1, 2]
+      // softmax
+      const m = Math.max(logits[0], logits[1]);
+      const e0 = Math.exp(logits[0] - m);
+      const e1 = Math.exp(logits[1] - m);
+      const sum = e0 + e1;
+      return {
+        p_human: e0 / sum,
+        p_ai: e1 / sum,
+        cleaned_chars: cleaned.length,
+      };
+    }
+
+    // Eksponer til Rust
+    window.naiDetector = {
+      loadModel,
+      predict,
+      cleanText,
+    };
+  </script>
+</head>
+<body>
+</body>
+</html>

@@ -1,0 +1,148 @@
+:root {
+  --pico-font-family: system-ui, -apple-system, "Helvetica Neue", sans-serif;
+}
+
+main.container {
+  max-width: 760px;
+  padding-block: 2rem;
+}
+
+header h1 {
+  margin-bottom: 0.5rem;
+}
+
+header p.lead {
+  color: var(--pico-muted-color);
+  margin-bottom: 2rem;
+}
+
+.textarea-wrap {
+  position: relative;
+}
+
+textarea {
+  min-height: 240px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.length-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--pico-muted-color);
+  margin-top: 0.25rem;
+}
+
+.length-info.warn {
+  color: var(--pico-color-amber-550);
+}
+
+.length-info.err {
+  color: var(--pico-color-red-550);
+}
+
+.btn-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.btn-row button {
+  flex: 1;
+  max-width: 200px;
+}
+
+.status {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-card-border-color);
+  font-size: 0.9rem;
+}
+
+.result {
+  margin-top: 2rem;
+  padding: 1.5rem;
+  border-radius: 0.75rem;
+  border: 2px solid;
+  text-align: center;
+}
+
+.result.human {
+  border-color: var(--pico-color-jade-550);
+  background: color-mix(in srgb, var(--pico-color-jade-550) 8%, transparent);
+}
+
+.result.ai {
+  border-color: var(--pico-color-red-550);
+  background: color-mix(in srgb, var(--pico-color-red-550) 8%, transparent);
+}
+
+.result .verdict {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+}
+
+.result.human .verdict { color: var(--pico-color-jade-700); }
+.result.ai .verdict { color: var(--pico-color-red-700); }
+
+.bars {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  margin-bottom: 0.15rem;
+}
+
+.bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--pico-secondary-background);
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  transition: width 0.5s ease;
+}
+
+.bar-fill.human { background: var(--pico-color-jade-550); }
+.bar-fill.ai { background: var(--pico-color-red-550); }
+
+footer {
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--pico-muted-border-color);
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--pico-muted-color);
+}
+
+footer a {
+  color: var(--pico-primary);
+}
+
+.warning-box {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  border-left: 4px solid var(--pico-color-amber-550);
+  background: color-mix(in srgb, var(--pico-color-amber-550) 8%, transparent);
+  font-size: 0.9rem;
+}
+
+.warning-box.err {
+  border-left-color: var(--pico-color-red-550);
+  background: color-mix(in srgb, var(--pico-color-red-550) 8%, transparent);
+}

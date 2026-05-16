@@ -1,0 +1,20 @@
+[package]
+name = "norsk-ai-detektor"
+version = "0.1.0"
+edition = "2021"
+description = "Browser-app som klassifiserer norsk tekst som menneske vs AI-generert"
+
+[dependencies]
+yew = { version = "0.21", features = ["csr"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+gloo = { version = "0.11", features = ["console"] }
+web-sys = { version = "0.3", features = ["Window", "console"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
