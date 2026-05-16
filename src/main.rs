@@ -3,6 +3,7 @@
 //! Inference + tokenisering gjøres via transformers.js (eksponert via window.naiDetector).
 //! Modellen lastes fra HuggingFace ved første scoring.
 
+use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use yew::prelude::*;
@@ -16,16 +17,24 @@ const HARD_MAX: usize = 50_000;
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "naiDetector"], js_name = loadModel)]
-    fn js_load_model() -> js_sys::Promise;
+    fn js_load_model(progress_cb: &JsValue) -> js_sys::Promise;
 
     #[wasm_bindgen(js_namespace = ["window", "naiDetector"], js_name = predict)]
     fn js_predict(text: &str) -> js_sys::Promise;
 }
 
+#[derive(Clone, PartialEq, Debug, Default)]
+struct LoadProgress {
+    file: String,
+    percent: f64,
+    loaded_mb: f64,
+    total_mb: f64,
+}
+
 #[derive(Clone, PartialEq, Debug)]
 enum ModelState {
     NotLoaded,
-    Loading,
+    Loading(LoadProgress),
     Loaded,
     Error(String),
 }
@@ -69,9 +78,31 @@ fn app() -> Html {
                 busy.set(true);
 
                 // Last modell hvis ikke lastet
-                if *model_state == ModelState::NotLoaded {
-                    model_state.set(ModelState::Loading);
-                    let res = JsFuture::from(js_load_model()).await;
+                if matches!(*model_state, ModelState::NotLoaded) {
+                    model_state.set(ModelState::Loading(LoadProgress::default()));
+                    // Progress-callback fra transformers.js
+                    let ms = model_state.clone();
+                    let cb = Closure::wrap(Box::new(move |info: JsValue| {
+                        let file = js_sys::Reflect::get(&info, &"file".into())
+                            .ok().and_then(|v| v.as_string()).unwrap_or_default();
+                        let progress = js_sys::Reflect::get(&info, &"progress".into())
+                            .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let loaded = js_sys::Reflect::get(&info, &"loaded".into())
+                            .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let total = js_sys::Reflect::get(&info, &"total".into())
+                            .ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        // Bare oppdater når vi har en størrelse å vise (filter ut bookkeeping-events)
+                        if progress > 0.0 || total > 0.0 {
+                            ms.set(ModelState::Loading(LoadProgress {
+                                file,
+                                percent: progress.min(100.0),
+                                loaded_mb: loaded / (1024.0 * 1024.0),
+                                total_mb: total / (1024.0 * 1024.0),
+                            }));
+                        }
+                    }) as Box<dyn FnMut(JsValue)>);
+                    let res = JsFuture::from(js_load_model(cb.as_ref())).await;
+                    cb.forget(); // lever ut levetiden til Rust
                     match res {
                         Ok(_) => model_state.set(ModelState::Loaded),
                         Err(e) => {
@@ -163,12 +194,22 @@ fn app() -> Html {
 
     let status_text = match &*model_state {
         ModelState::NotLoaded => html! { <></> },
-        ModelState::Loading => html! {
-            <div class="status">
-                {"Laster modellen fra HuggingFace (~90 MB første gang, cachet etterpå)..."}
-                <progress />
-            </div>
-        },
+        ModelState::Loading(p) => {
+            let label = if p.total_mb > 0.0 {
+                format!("Laster {} — {:.0}% ({:.1} / {:.1} MB)",
+                        if p.file.is_empty() { "modellen" } else { &p.file },
+                        p.percent, p.loaded_mb, p.total_mb)
+            } else {
+                "Forbereder lasting...".to_string()
+            };
+            let pct = p.percent / 100.0;
+            html! {
+                <div class="status">
+                    <div style="margin-bottom: 0.5rem;">{ label }</div>
+                    <progress value={format!("{}", pct)} max="1" />
+                </div>
+            }
+        }
         ModelState::Loaded => html! { <></> },
         ModelState::Error(e) => html! {
             <div class="status" style="color: var(--pico-color-red-550);">
@@ -223,6 +264,26 @@ fn app() -> Html {
                     {"Vurder om en tekst er skrevet av et menneske eller generert av AI. "}
                     {"Modellen kjører lokalt i nettleseren din — teksten din forlater aldri maskinen."}
                 </p>
+                <details class="intro-box">
+                    <summary>{"Slik fungerer det · trent på · førstegangslasting"}</summary>
+                    <p>
+                        <strong>{"Førstegangslasting tar tid."}</strong>{" Når du klikker «Analyser tekst» "}
+                        {"første gang, lastes hele modellen (~90 MB) ned fra HuggingFace. Det kan ta "}
+                        {"1-3 minutter avhengig av forbindelsen din. Modellen blir så cachet i nettleseren — "}
+                        {"alle senere analyser går på under et sekund."}
+                    </p>
+                    <p>
+                        <strong>{"AI-modeller den er trent til å gjenkjenne:"}</strong>{" Anthropic Claude (Opus, Sonnet, Haiku 4.x), "}
+                        {"OpenAI GPT-5 og GPT-5-mini, Google Gemini 2.5 Pro og Flash. "}
+                        {"Tekst fra modeller utenfor denne listen er ikke testet."}
+                    </p>
+                    <p>
+                        <strong>{"Åpen og fri."}</strong>{" Selve modellen ligger åpent tilgjengelig på "}
+                        <a href="https://huggingface.co/pegesund/norwegian-ai-detector" target="_blank" rel="noopener">{"HuggingFace"}</a>
+                        {" under CC-BY-SA-4.0. Kildekoden til denne websiden ligger på "}
+                        <a href="https://github.com/pegesund/norsk-ai-detektor" target="_blank" rel="noopener">{"GitHub"}</a>{"."}
+                    </p>
+                </details>
             </header>
 
             <div class="textarea-wrap">

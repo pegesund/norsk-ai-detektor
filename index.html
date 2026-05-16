@@ -22,8 +22,15 @@
     let model = null;
 
     async function loadModel(progressCallback) {
+      // transformers.js sender progress-info som {status, file, progress, loaded, total, name}
+      // Vi videresender til Rust-callback hvis satt.
+      const cb = (info) => {
+        if (typeof progressCallback === "function") {
+          try { progressCallback(info); } catch (e) { console.error(e); }
+        }
+      };
       const opts = {
-        progress_callback: progressCallback,
+        progress_callback: cb,
         dtype: "fp16",  // 87 MB; bruker onnx/detector_fp16.onnx
       };
       tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID, opts);
