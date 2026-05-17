@@ -12,7 +12,7 @@ js-sys = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 gloo = { version = "0.11", features = ["console"] }
-web-sys = { version = "0.3", features = ["Window", "console"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "HtmlElement", "Element", "console"] }
 
 [profile.release]
 opt-level = "z"

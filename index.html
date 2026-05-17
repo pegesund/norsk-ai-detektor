@@ -18,7 +18,62 @@
     let tokenizer = null;
     let session = null;
 
+    // IndexedDB-cache for ONNX-bytes.
+    // HF redirigerer via signerte CDN-URLer som skifter hver gang, så browserens
+    // HTTP-cache gir ikke treff. Vi cacher selv i IndexedDB.
+    const IDB_NAME = "nai-detector-cache";
+    const IDB_STORE = "models";
+    const CACHE_KEY = "detector_fp16_v1";
+
+    function idbOpen() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(IDB_NAME, 1);
+        req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    async function idbGet(key) {
+      const db = await idbOpen();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, "readonly");
+        const req = tx.objectStore(IDB_STORE).get(key);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    async function idbPut(key, value) {
+      const db = await idbOpen();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, "readwrite");
+        tx.objectStore(IDB_STORE).put(value, key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
     async function fetchOnnxWithProgress(url, progressCb) {
+      // Sjekk IndexedDB først
+      try {
+        const cached = await idbGet(CACHE_KEY);
+        if (cached) {
+          console.log("[cache] traff IndexedDB, hopper over nedlasting");
+          if (progressCb) {
+            progressCb({
+              status: "progress",
+              file: "detector_fp16.onnx (cachet)",
+              loaded: cached.byteLength,
+              total: cached.byteLength,
+              progress: 100,
+            });
+          }
+          return new Uint8Array(cached);
+        }
+      } catch (e) {
+        console.warn("[cache] IndexedDB-feil:", e);
+      }
+
+      // Cache-miss: last ned med progress
       const resp = await fetch(url);
       if (!resp.ok) throw new Error(`fetch ${url} -> ${resp.status}`);
       const total = parseInt(resp.headers.get("content-length") || "0", 10);
@@ -42,6 +97,15 @@
       const buf = new Uint8Array(loaded);
       let off = 0;
       for (const c of chunks) { buf.set(c, off); off += c.length; }
+
+      // Lagre i IndexedDB for neste gang
+      try {
+        await idbPut(CACHE_KEY, buf.buffer);
+        console.log("[cache] lagret", buf.byteLength, "bytes i IndexedDB");
+      } catch (e) {
+        console.warn("[cache] kunne ikke lagre i IndexedDB:", e);
+      }
+
       return buf;
     }
 

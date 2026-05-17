@@ -5,6 +5,7 @@
 
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use yew::prelude::*;
 
@@ -156,6 +157,15 @@ fn app() -> Html {
         Callback::from(move |_| {
             text.set(String::new());
             prediction.set(None);
+            // Scroll til toppen og fokuser textarea
+            if let Some(w) = web_sys::window() {
+                w.scroll_to_with_x_and_y(0.0, 0.0);
+                if let Some(doc) = w.document() {
+                    if let Some(el) = doc.query_selector("textarea").ok().flatten() {
+                        let _ = el.dyn_into::<web_sys::HtmlElement>().map(|e| e.focus());
+                    }
+                }
+            }
         })
     };
 
@@ -237,6 +247,7 @@ fn app() -> Html {
         let verdict_class = if is_human { "result human" } else { "result ai" };
         let verdict_text = if is_human { "Sannsynligvis menneske" } else { "Sannsynligvis AI-generert" };
         let confidence = (p.p_human.max(p.p_ai) * 100.0).round();
+        let on_new = on_clear.clone();
         html! {
             <div class={verdict_class}>
                 <div class="verdict">{verdict_text}</div>
@@ -264,6 +275,9 @@ fn app() -> Html {
                 <p style="font-size: 0.8rem; color: var(--pico-muted-color); margin-top: 1rem;">
                     {format!("Tekst etter normalisering: {} tegn", p.cleaned_chars)}
                 </p>
+                <button onclick={on_new} style="margin-top: 1rem; width: auto;">
+                    {"Analyser ny tekst"}
+                </button>
             </div>
         }
     });
