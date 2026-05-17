@@ -356,7 +356,10 @@ fn app() -> Html {
                     </a>
                 </p>
                 <p>
-                    {"In-distribution F1 = 0.998. Reell ytelse på ukjente AI-modeller og tekster utenfor treningssettet er ikke garantert."}
+                    {"Modellen vil trenge finetuning på spesialiserte domener som jus eller medisin. "}
+                    {"Les mer om modellen "}
+                    <a href="https://www.linkedin.com/pulse/menneske-eller-maskin-en-ml-modell-på-norsk-petter-egesund-fbloe/" target="_blank" rel="noopener">{"her"}</a>
+                    {"."}
                 </p>
             </footer>
         </main>
